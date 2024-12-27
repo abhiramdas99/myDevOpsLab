@@ -1,0 +1,22 @@
+
+1. Make sure the nvm and nodejs installed 
+  node -v
+  npm -v
+
+2. Create project directory
+  mkdir simple-node-app
+  cd simple-node-app
+
+3. Initialize the Project:  
+  npm init -y  # This creates a package.json file with default settings.
+
+
+4. Install Dependencies: For a simple web server, you can use express.
+  npm install express
+
+5. Create the Main Application File:
+touch app.js
+
+
+3. 
+

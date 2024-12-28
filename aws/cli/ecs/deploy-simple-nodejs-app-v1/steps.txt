@@ -3,7 +3,7 @@
   node -v
   npm -v
 
-2. Create project directory
+2. Create project directory or clone from the reop
   mkdir simple-node-app
   cd simple-node-app
 
@@ -14,9 +14,98 @@
 4. Install Dependencies: For a simple web server, you can use express.
   npm install express
 
-5. Create the Main Application File:
-touch app.js
+5. Create the Main Application File & gitignore file:
+  touch app.js   & .gitignore file 
+
+6. test the node application is running or not 
+  node app.js
+
+7. create docker file . check repo
+  touch Dockerfile
+
+8. Build and test your application locally to ensure it works 
+  docker build . -t my-node-app && docker run -p 3000:3000 my-node-app
+  
+9. Once test is completed,  stop the container 
+  docker stop my-node-app:latest
+
+10. sso authentication to connect aws  through cli
+   https://aws.amazon.com/what-is/sso/
+   aws-vault list  # copy one profile from the list 
+   aws-vault exec AdministratorAccess-039612877102 --duration=8h
+   https://device.sso.eu-west-1.amazonaws.com/?user_code=FBLH-LBDW
+
+11. verify that you are in exact profile
+   aws sts get-caller-identity --query "Account" --output text # make sure that, your are login correct aws account 
+   aws s3 ls  # list out the s3 object 
+
+12. Initialize all important variable to reused
+  export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text)
+  export AWS_REGION=eu-west-1   #set default region 
+  export DEFAULT_VPC_ID=$(aws ec2 describe-vpcs --filters "Name=isDefault,Values=true" --query "Vpcs[0].VpcId" --output text)
+  export DEFAULT_SUBNET_IDS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$DEFAULT_VPC_ID" "Name=default-for-az,Values=true" --query "Subnets[0].SubnetId" --output text)
+
+18. Create security group, attach to default vpc & Initialize 
+  export ECS_SG_GROUP_ID=$(aws ec2 create-security-group --group-name security-group-ecs --description "security group to allow ecs" --vpc-id $DEFAULT_VPC_ID)
 
 
-3. 
+19.  ingress rule
+aws ec2 authorize-security-group-ingress \
+    --group-id $ECS_SG_GROUP_ID \
+    --protocol tcp \
+    --port 3000 \
+    --cidr 0.0.0.0/0  
 
+13. create ecr registry 
+  aws ecr create-repository --region $AWS_REGION --repository-name my-node-app
+
+14. Authenticate Docker to ECR:
+  aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.eu-west-1.amazonaws.com
+
+15. Tag and Push the Docker Image:
+docker tag my-node-app:latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/my-node-app
+docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/my-node-app
+
+16. create esc cluster 
+  aws ecs create-cluster --region $AWS_REGION --cluster-name my-ecs-cluster
+
+17. register a task definition
+  aws ecs register-task-definition  --region $AWS_REGION --cli-input-json file://task-definition.json
+
+17.1.(optional) If there is not any task execution role then run the below command ;
+aws iam create-role --role-name ecsTaskExecutionRole \
+    --assume-role-policy-document '{
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Effect": "Allow",
+                "Principal": {
+                    "Service": "ecs-tasks.amazonaws.com"
+                },
+                "Action": "sts:AssumeRole"
+            }
+        ]
+    }'
+
+aws iam attach-role-policy --role-name ecsTaskExecutionRole \
+    --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+ 
+
+
+19. create service
+aws ecs create-service \
+  --region $AWS_REGION \
+  --cluster my-ecs-cluster \
+  --service-name my-node-app-service \
+  --task-definition my-node-app-task \
+  --launch-type FARGATE \
+  --network-configuration "awsvpcConfiguration={subnets=[\"$DEFAULT_SUBNET_IDS\"],securityGroups=[\"$ECS_SG_GROUP_ID\"],assignPublicIp=ENABLED}" \
+  --desired-count 1
+
+
+19. Clean Up (Optional)
+  aws ecs delete-service --cluster my-ecs-cluster --service my-node-app-service --force
+  aws ecs delete-cluster --cluster my-ecs-cluster
+  aws ecr delete-repository --repository-name my-node-app --force
+  aws ecs deregister-task-definition --task-definition my-node-app-task:3 # need to find the revision manually 
+  aws ec2 delete-security-group --group-id $ECS_SG_GROUP_ID
